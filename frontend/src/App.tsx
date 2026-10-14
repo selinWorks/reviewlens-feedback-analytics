@@ -1,7 +1,8 @@
 import { useState } from 'react'
+import Papa from 'papaparse'
 
 type Sentiment = 'negative' | 'neutral' | 'positive'
-type Mode = 'single' | 'batch'
+type Mode = 'single' | 'batch' | 'csv'
 
 type ReviewResponse = {
   text: string
@@ -31,8 +32,56 @@ const colors: Record<Sentiment, string> = {
 
 const sentimentOrder: Sentiment[] = ['positive', 'neutral', 'negative']
 
+const modeLabels: Record<Mode, string> = {
+  single: 'Single review',
+  batch: 'Batch analysis',
+  csv: 'Upload CSV',
+}
+
 function percent(value: number) {
   return `${(value * 100).toFixed(1)}%`
+}
+
+function validateReviews(texts: string[]): string | null {
+  if (texts.length === 0) return 'Please enter at least one review.'
+  if (texts.length > 50) return 'You can analyze up to 50 reviews at a time.'
+
+  const index = texts.findIndex((text) => text.length > 10000)
+
+  if (index !== -1) {
+    return `Review ${index + 1} exceeds the 10,000-character limit.`
+  }
+
+  return null
+}
+
+function downloadResults(results: ReviewResponse[]) {
+  const csv = Papa.unparse(
+    results.map((result) => ({
+      text: result.text,
+      sentiment: result.sentiment,
+      confidence: result.confidence,
+      positive_score: result.scores.positive,
+      neutral_score: result.scores.neutral,
+      negative_score: result.scores.negative,
+      model: result.model,
+    })),
+    { escapeFormulae: true },
+  )
+
+  const blob = new Blob(['\uFEFF', csv], {
+    type: 'text/csv;charset=utf-8;',
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = 'reviewlens-results.csv'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 function ReviewResult({ result }: { result: ReviewResponse }) {
@@ -106,9 +155,12 @@ function App() {
   const [mode, setMode] = useState<Mode>('single')
   const [review, setReview] = useState('')
   const [batchText, setBatchText] = useState('')
+  const [csvReviews, setCsvReviews] = useState<string[]>([])
+  const [fileName, setFileName] = useState('')
   const [result, setResult] = useState<ReviewResponse | null>(null)
   const [batchResult, setBatchResult] = useState<BatchResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isParsing, setIsParsing] = useState(false)
   const [error, setError] = useState('')
 
   const batchReviews = batchText
@@ -116,7 +168,18 @@ function App() {
     .map((text) => text.trim())
     .filter(Boolean)
 
-  const currentText = mode === 'single' ? review : batchText
+  const activeReviews =
+    mode === 'single'
+      ? review.trim()
+        ? [review.trim()]
+        : []
+      : mode === 'batch'
+        ? batchReviews
+        : csvReviews
+
+  const busy = isLoading || isParsing
+  const validationError = validateReviews(activeReviews)
+  const exportResults = result ? [result] : batchResult?.results ?? []
 
   function clearResults() {
     setResult(null)
@@ -125,40 +188,84 @@ function App() {
   }
 
   function changeMode(nextMode: Mode) {
-    if (isLoading) return
+    if (busy) return
     setMode(nextMode)
     clearResults()
   }
 
-  async function handleAnalyze() {
-    if (isLoading) return
+  function handleFile(file: File | undefined) {
+    if (!file || busy) return
 
     clearResults()
+    setCsvReviews([])
+    setFileName('')
 
-    if (mode === 'single' && !review.trim()) {
-      setError('Please enter a review.')
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setError('Please select a .csv file.')
       return
     }
 
-    if (mode === 'batch') {
-      if (batchReviews.length === 0) {
-        setError('Please enter at least one review.')
-        return
-      }
+    if (file.size > 2 * 1024 * 1024) {
+      setError('Please select a CSV file smaller than 2 MB.')
+      return
+    }
 
-      if (batchReviews.length > 50) {
-        setError('You can analyze up to 50 reviews at a time.')
-        return
-      }
+    setIsParsing(true)
 
-      const tooLong = batchReviews.findIndex((text) => text.length > 10000)
+    Papa.parse<Record<string, string>>(file, {
+      delimiter: ',',
+      header: true,
+      encoding: 'UTF-8',
+      skipEmptyLines: 'greedy',
+      transformHeader: (header) => header.replace(/^\uFEFF/, '').trim(),
 
-      if (tooLong !== -1) {
-        setError(
-          `Review ${tooLong + 1} exceeds the 10,000 character limit.`,
-        )
-        return
-      }
+      complete: (parsed) => {
+        setIsParsing(false)
+
+        if (parsed.errors.length > 0) {
+          setError(
+            'The CSV could not be read correctly. Check its quotes, columns, and formatting.',
+          )
+          return
+        }
+
+        if (!parsed.meta.fields?.includes('text')) {
+          setError('The CSV must contain a column named "text".')
+          return
+        }
+
+        const texts = parsed.data
+          .map((row) => (row.text ?? '').trim())
+          .filter(Boolean)
+
+        const issue = validateReviews(texts)
+
+        if (issue) {
+          setError(issue)
+          return
+        }
+
+        setCsvReviews(texts)
+        setFileName(file.name)
+      },
+
+      error: () => {
+        setIsParsing(false)
+        setError('Could not read the file. Please try again.')
+      },
+    })
+  }
+
+  async function handleAnalyze() {
+    if (busy) return
+
+    clearResults()
+
+    const issue = validateReviews(activeReviews)
+
+    if (issue) {
+      setError(issue)
+      return
     }
 
     setIsLoading(true)
@@ -167,27 +274,23 @@ function App() {
       const endpoint = mode === 'single' ? '/analyze' : '/analyze-batch'
       const body =
         mode === 'single'
-          ? { text: review.trim() }
-          : { reviews: batchReviews.map((text) => ({ text })) }
+          ? { text: activeReviews[0] }
+          : { reviews: activeReviews.map((text) => ({ text })) }
 
       const response = await fetch(`http://127.0.0.1:8000${endpoint}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
 
       if (!response.ok) {
         let message = `Analysis failed (${response.status}). Please try again.`
-
         const payload = await response.json().catch(() => null)
 
         if (typeof payload?.detail === 'string') {
           message = payload.detail
         } else if (response.status === 422) {
-          message =
-            'Check your input. Reviews may be too long or exceed the allowed limit.'
+          message = 'Check your input. One or more reviews may be too long.'
         }
 
         throw new Error(message)
@@ -218,7 +321,7 @@ function App() {
       <h1>ReviewLens</h1>
       <p>Turn customer feedback into actionable insights.</p>
 
-      <section className="review-panel" aria-busy={isLoading}>
+      <section className="review-panel" aria-busy={busy}>
         <h2>Analyze customer feedback</h2>
         <p>Analyze reviews in Turkish or English.</p>
 
@@ -232,12 +335,12 @@ function App() {
             marginBottom: '24px',
           }}
         >
-          {(['single', 'batch'] as Mode[]).map((item) => (
+          {(['single', 'batch', 'csv'] as Mode[]).map((item) => (
             <button
               key={item}
               type="button"
               aria-pressed={mode === item}
-              disabled={isLoading}
+              disabled={busy}
               onClick={() => changeMode(item)}
               style={{
                 padding: '10px 18px',
@@ -246,73 +349,132 @@ function App() {
                 backgroundColor: mode === item ? '#7c3aed' : '#ffffff',
                 color: mode === item ? '#ffffff' : '#344054',
                 fontWeight: 600,
-                cursor: isLoading ? 'wait' : 'pointer',
+                cursor: busy ? 'wait' : 'pointer',
               }}
             >
-              {item === 'single' ? 'Single review' : 'Batch analysis'}
+              {modeLabels[item]}
             </button>
           ))}
         </div>
 
-        <label htmlFor="review">
-          {mode === 'single' ? 'Customer review' : 'Customer reviews'}
-        </label>
+        {mode === 'csv' ? (
+          <div>
+            <label htmlFor="csv-file">Review CSV file</label>
+            <p id="csv-help">
+              Select a UTF-8 CSV with a column named "text". Up to 50
+              non-empty reviews, maximum file size 2 MB. Empty reviews
+              are ignored.
+            </p>
 
-        <p id="input-help">
-          {mode === 'single'
-            ? 'Enter one review, up to 10,000 characters. The model also has a 512-token limit.'
-            : 'Enter one review per line, up to 50 reviews. Blank lines are ignored. Each review has a 10,000-character and 512-token limit.'}
-        </p>
+            <input
+              id="csv-file"
+              type="file"
+              accept=".csv,text/csv"
+              aria-describedby="csv-help"
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                event.target.value = ''
+                handleFile(file)
+              }}
+            />
 
-        <textarea
-          id="review"
-          aria-describedby="input-help"
-          value={currentText}
-          onChange={(event) => {
-            if (mode === 'single') {
-              setReview(event.target.value)
-            } else {
-              setBatchText(event.target.value)
-            }
-            clearResults()
-          }}
-          placeholder={
-            mode === 'single'
-              ? 'Paste a customer review here...'
-              : 'Ürün çok kaliteli, tavsiye ederim.\nThe product arrived broken.\nPaketin içinde bir kullanım kılavuzu bulunuyor.'
-          }
-          rows={mode === 'single' ? 6 : 10}
-          maxLength={mode === 'single' ? 10000 : 500100}
-          disabled={isLoading}
-        />
+            {fileName && (
+              <div style={{ marginTop: '20px' }}>
+                <p>
+                  <strong>{fileName}</strong> — {csvReviews.length} reviews
+                  ready
+                </p>
 
-        <span className="character-count">
-          {mode === 'single'
-            ? `${review.length} / 10,000 characters`
-            : `${batchReviews.length} / 50 reviews`}
-        </span>
+                <h3>Preview: first {Math.min(5, csvReviews.length)} reviews</h3>
+                <ol>
+                  {csvReviews.slice(0, 5).map((text, index) => (
+                    <li
+                      key={index}
+                      style={{
+                        marginBottom: '10px',
+                        whiteSpace: 'pre-wrap',
+                        overflowWrap: 'anywhere',
+                      }}
+                    >
+                      {text}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <label htmlFor="review">
+              {mode === 'single' ? 'Customer review' : 'Customer reviews'}
+            </label>
+
+            <p id="input-help">
+              {mode === 'single'
+                ? 'Enter one customer review.'
+                : 'Enter one review per line, up to 50 reviews. Blank lines are ignored.'}
+            </p>
+
+            <textarea
+              id="review"
+              aria-describedby="input-help"
+              value={mode === 'single' ? review : batchText}
+              onChange={(event) => {
+                if (mode === 'single') {
+                  setReview(event.target.value)
+                } else {
+                  setBatchText(event.target.value)
+                }
+                clearResults()
+              }}
+              placeholder={
+                mode === 'single'
+                  ? 'Paste a customer review here...'
+                  : 'Enter each customer review on a separate line...'
+              }
+              rows={mode === 'single' ? 6 : 10}
+              maxLength={mode === 'single' ? 10000 : 500100}
+              disabled={busy}
+            />
+
+            <span className="character-count">
+              {mode === 'single'
+                ? `${review.length} / 10,000 characters`
+                : `${batchReviews.length} / 50 reviews`}
+            </span>
+          </>
+        )}
 
         <button
           type="button"
           className="analyze-button"
-          disabled={
-            isLoading ||
-            (mode === 'single'
-              ? !review.trim()
-              : batchReviews.length === 0 || batchReviews.length > 50)
-          }
+          style={{ marginTop: '20px' }}
+          disabled={busy || validationError !== null}
           onClick={handleAnalyze}
         >
-          {isLoading
-            ? 'Analyzing...'
-            : mode === 'single'
-              ? 'Analyze review'
-              : 'Analyze reviews'}
+          {isParsing
+            ? 'Reading CSV...'
+            : isLoading
+              ? 'Analyzing...'
+              : mode === 'single'
+                ? 'Analyze review'
+                : 'Analyze reviews'}
         </button>
 
         <p role="status">
-          {isLoading ? 'Analyzing your feedback. Please wait.' : ''}
+          {isParsing
+            ? 'Reading your CSV file.'
+            : isLoading
+              ? 'Analyzing your feedback. Please wait.'
+              : ''}
         </p>
+
+        {validationError && activeReviews.length > 0 && (
+          <p className="error-message" role="alert">
+            {validationError}
+          </p>
+        )}
 
         {error && (
           <p className="error-message" role="alert">
@@ -322,6 +484,17 @@ function App() {
       </section>
 
       <div aria-live="polite">
+        {exportResults.length > 0 && (
+          <button
+            type="button"
+            className="analyze-button"
+            onClick={() => downloadResults(exportResults)}
+            style={{ marginBottom: '20px' }}
+          >
+            Download results CSV
+          </button>
+        )}
+
         {result && (
           <section aria-label="Analysis result">
             <h2>Analysis result</h2>
@@ -355,11 +528,9 @@ function App() {
                     <strong style={{ color: colors[sentiment] }}>
                       {labels[sentiment]}
                     </strong>
-
                     <div style={{ fontSize: '28px', fontWeight: 700 }}>
                       {batchResult.counts[sentiment]}
                     </div>
-
                     <span>
                       {percent(
                         batchResult.counts[sentiment] / batchResult.total,
@@ -380,7 +551,7 @@ function App() {
           </section>
         )}
 
-        {(result || batchResult) && (
+        {exportResults.length > 0 && (
           <p>
             Confidence reflects the model’s score, not measured accuracy.
           </p>
