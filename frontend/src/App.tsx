@@ -4,18 +4,42 @@ import Papa from 'papaparse'
 type Sentiment = 'negative' | 'neutral' | 'positive'
 type Mode = 'single' | 'batch' | 'csv'
 
+type TopicMatch = {
+  topic: string
+  label: string
+  matched_keywords: string[]
+  method: 'keyword_rules'
+}
+
 type ReviewResponse = {
   text: string
   sentiment: Sentiment
   confidence: number
   scores: Record<Sentiment, number>
   model: string
+  topics: TopicMatch[]
+}
+
+type TopicSummary = {
+  topic: string
+  label: string
+  count: number
+  percentage: number
+  evidence: {
+    review_index: number
+    text: string
+    review_sentiment: Sentiment
+    matched_keywords: string[]
+  }[]
 }
 
 type BatchResponse = {
   total: number
   counts: Record<Sentiment, number>
   results: ReviewResponse[]
+  topic_summary: TopicSummary[]
+  unmatched_topic_count: number
+  topic_method: 'keyword_rules'
 }
 
 const labels: Record<Sentiment, string> = {
@@ -38,21 +62,32 @@ const modeLabels: Record<Mode, string> = {
   csv: 'Upload CSV',
 }
 
+const gridStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+  gap: '16px',
+}
+
+const cardStyle = {
+  padding: '20px',
+  border: '1px solid #eaecf0',
+  borderRadius: '12px',
+  minWidth: 0,
+}
+
 function percent(value: number) {
   return `${(value * 100).toFixed(1)}%`
 }
 
 function validateReviews(texts: string[]): string | null {
-  if (texts.length === 0) return 'Please enter at least one review.'
+  if (!texts.length) return 'Please enter at least one review.'
   if (texts.length > 50) return 'You can analyze up to 50 reviews at a time.'
 
   const index = texts.findIndex((text) => text.length > 10000)
 
-  if (index !== -1) {
-    return `Review ${index + 1} exceeds the 10,000-character limit.`
-  }
-
-  return null
+  return index === -1
+    ? null
+    : `Review ${index + 1} exceeds the 10,000-character limit.`
 }
 
 function downloadResults(results: ReviewResponse[]) {
@@ -64,90 +99,166 @@ function downloadResults(results: ReviewResponse[]) {
       positive_score: result.scores.positive,
       neutral_score: result.scores.neutral,
       negative_score: result.scores.negative,
+      topics: result.topics.map((topic) => topic.label).join('; '),
+      topic_matches: JSON.stringify(
+        result.topics.map((topic) => ({
+          topic: topic.topic,
+          matched_keywords: topic.matched_keywords,
+        })),
+      ),
+      topic_method: 'keyword_rules',
       model: result.model,
     })),
     { escapeFormulae: true },
   )
 
-  const blob = new Blob(['\uFEFF', csv], {
-    type: 'text/csv;charset=utf-8;',
-  })
-  const url = URL.createObjectURL(blob)
+  const url = URL.createObjectURL(
+    new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8;' }),
+  )
   const link = document.createElement('a')
-
   link.href = url
   link.download = 'reviewlens-results.csv'
   document.body.appendChild(link)
   link.click()
   link.remove()
-
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 function ReviewResult({ result }: { result: ReviewResponse }) {
   return (
     <article className="review-panel">
-      <p className="submitted-review" style={{ whiteSpace: 'pre-wrap' }}>
+      <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
         {result.text}
       </p>
 
       <p>
-        Sentiment:{' '}
+        Overall review sentiment:{' '}
         <strong style={{ color: colors[result.sentiment] }}>
           {labels[result.sentiment]}
         </strong>
       </p>
+      <p>Model confidence: <strong>{percent(result.confidence)}</strong></p>
 
-      <p>
-        Model confidence: <strong>{percent(result.confidence)}</strong>
-      </p>
+      <h4>Matched topics</h4>
+      {result.topics.length ? (
+        <ul>
+          {result.topics.map((topic) => (
+            <li key={topic.topic}>
+              <strong>{topic.label}</strong>
+              {' — '}Matched keywords: {topic.matched_keywords.join(', ')}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p>No predefined topic matched this review.</p>
+      )}
 
       <details>
         <summary style={{ cursor: 'pointer', marginBottom: '12px' }}>
           View sentiment scores
         </summary>
-
         {sentimentOrder.map((sentiment) => (
           <div key={sentiment} style={{ marginBottom: '12px' }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                gap: '16px',
-                marginBottom: '4px',
-              }}
-            >
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span>{labels[sentiment]}</span>
               <span>{percent(result.scores[sentiment])}</span>
             </div>
-
             <div
               role="meter"
               aria-label={`${labels[sentiment]} score`}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={result.scores[sentiment] * 100}
-              aria-valuetext={percent(result.scores[sentiment])}
               style={{
                 height: '10px',
-                backgroundColor: '#eaecf0',
+                background: '#eaecf0',
                 borderRadius: '999px',
                 overflow: 'hidden',
+                marginTop: '4px',
               }}
             >
-              <div
-                style={{
-                  width: `${result.scores[sentiment] * 100}%`,
-                  height: '100%',
-                  backgroundColor: colors[sentiment],
-                  borderRadius: '999px',
-                }}
-              />
+              <div style={{
+                width: `${result.scores[sentiment] * 100}%`,
+                height: '100%',
+                background: colors[sentiment],
+              }} />
             </div>
           </div>
         ))}
       </details>
     </article>
+  )
+}
+
+function TopicOverview({ data }: { data: BatchResponse }) {
+  return (
+    <section className="review-panel" aria-label="Topic overview">
+      <h2>Topics mentioned in reviews</h2>
+      <p>
+        Topics are matched using predefined Turkish and English keywords.
+        One review can mention several topics, so percentages may total
+        more than 100%.
+      </p>
+      <p>
+        Sentiment describes the whole review, not each individual topic.
+        A topic mention does not necessarily indicate a complaint.
+      </p>
+
+      <p>
+        Reviews without a topic match:{' '}
+        <strong>{data.unmatched_topic_count}</strong>
+      </p>
+
+      {data.topic_summary.length === 0 ? (
+        <p>No predefined topics matched these reviews.</p>
+      ) : (
+        <div style={gridStyle}>
+          {data.topic_summary.map((topic) => (
+            <article key={topic.topic} style={cardStyle}>
+              <h3>{topic.label}</h3>
+              <p>
+                <strong>{topic.count}</strong>
+                {' / '}{data.total} reviews
+                {' · '}{topic.percentage.toFixed(1)}%
+              </p>
+
+              <details>
+                <summary style={{ cursor: 'pointer' }}>
+                  View supporting reviews ({topic.count})
+                </summary>
+                {topic.evidence.map((item) => (
+                  <div
+                    key={item.review_index}
+                    style={{
+                      marginTop: '16px',
+                      borderTop: '1px solid #eaecf0',
+                      paddingTop: '12px',
+                    }}
+                  >
+                    <strong>Review {item.review_index}</strong>
+                    <p style={{
+                      whiteSpace: 'pre-wrap',
+                      overflowWrap: 'anywhere',
+                    }}>
+                      {item.text}
+                    </p>
+                    <p>
+                      Matched keywords: {item.matched_keywords.join(', ')}
+                    </p>
+                    <p>
+                      Overall review sentiment:{' '}
+                      <strong style={{ color: colors[item.review_sentiment] }}>
+                        {labels[item.review_sentiment]}
+                      </strong>
+                    </p>
+                  </div>
+                ))}
+              </details>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -163,19 +274,11 @@ function App() {
   const [isParsing, setIsParsing] = useState(false)
   const [error, setError] = useState('')
 
-  const batchReviews = batchText
-    .split(/\r?\n/)
-    .map((text) => text.trim())
+  const batchReviews = batchText.split(/\r?\n/).map((text) => text.trim())
     .filter(Boolean)
-
-  const activeReviews =
-    mode === 'single'
-      ? review.trim()
-        ? [review.trim()]
-        : []
-      : mode === 'batch'
-        ? batchReviews
-        : csvReviews
+  const activeReviews = mode === 'single'
+    ? review.trim() ? [review.trim()] : []
+    : mode === 'batch' ? batchReviews : csvReviews
 
   const busy = isLoading || isParsing
   const validationError = validateReviews(activeReviews)
@@ -187,15 +290,8 @@ function App() {
     setError('')
   }
 
-  function changeMode(nextMode: Mode) {
-    if (busy) return
-    setMode(nextMode)
-    clearResults()
-  }
-
   function handleFile(file: File | undefined) {
     if (!file || busy) return
-
     clearResults()
     setCsvReviews([])
     setFileName('')
@@ -204,51 +300,39 @@ function App() {
       setError('Please select a .csv file.')
       return
     }
-
     if (file.size > 2 * 1024 * 1024) {
-      setError('Please select a CSV file smaller than 2 MB.')
+      setError('Please select a CSV file no larger than 2 MB.')
       return
     }
 
     setIsParsing(true)
-
     Papa.parse<Record<string, string>>(file, {
       delimiter: ',',
       header: true,
       encoding: 'UTF-8',
       skipEmptyLines: 'greedy',
       transformHeader: (header) => header.replace(/^\uFEFF/, '').trim(),
-
       complete: (parsed) => {
         setIsParsing(false)
-
-        if (parsed.errors.length > 0) {
-          setError(
-            'The CSV could not be read correctly. Check its quotes, columns, and formatting.',
-          )
+        if (parsed.errors.length) {
+          setError('Invalid CSV formatting. Check its quotes and columns.')
           return
         }
-
         if (!parsed.meta.fields?.includes('text')) {
           setError('The CSV must contain a column named "text".')
           return
         }
 
-        const texts = parsed.data
-          .map((row) => (row.text ?? '').trim())
+        const texts = parsed.data.map((row) => (row.text ?? '').trim())
           .filter(Boolean)
-
         const issue = validateReviews(texts)
-
         if (issue) {
           setError(issue)
           return
         }
-
         setCsvReviews(texts)
         setFileName(file.name)
       },
-
       error: () => {
         setIsParsing(false)
         setError('Could not read the file. Please try again.')
@@ -258,24 +342,19 @@ function App() {
 
   async function handleAnalyze() {
     if (busy) return
-
     clearResults()
-
     const issue = validateReviews(activeReviews)
-
     if (issue) {
       setError(issue)
       return
     }
 
     setIsLoading(true)
-
     try {
       const endpoint = mode === 'single' ? '/analyze' : '/analyze-batch'
-      const body =
-        mode === 'single'
-          ? { text: activeReviews[0] }
-          : { reviews: activeReviews.map((text) => ({ text })) }
+      const body = mode === 'single'
+        ? { text: activeReviews[0] }
+        : { reviews: activeReviews.map((text) => ({ text })) }
 
       const response = await fetch(`http://127.0.0.1:8000${endpoint}`, {
         method: 'POST',
@@ -284,16 +363,12 @@ function App() {
       })
 
       if (!response.ok) {
-        let message = `Analysis failed (${response.status}). Please try again.`
         const payload = await response.json().catch(() => null)
-
-        if (typeof payload?.detail === 'string') {
-          message = payload.detail
-        } else if (response.status === 422) {
-          message = 'Check your input. One or more reviews may be too long.'
-        }
-
-        throw new Error(message)
+        throw new Error(
+          typeof payload?.detail === 'string'
+            ? payload.detail
+            : `Analysis failed (${response.status}). Check your input.`,
+        )
       }
 
       if (mode === 'single') {
@@ -307,9 +382,7 @@ function App() {
       setError(
         error instanceof TypeError
           ? 'Could not connect to the API. Check that the backend is running.'
-          : error instanceof Error
-            ? error.message
-            : 'Something went wrong. Please try again.',
+          : error instanceof Error ? error.message : 'Analysis failed.',
       )
     } finally {
       setIsLoading(false)
@@ -325,29 +398,26 @@ function App() {
         <h2>Analyze customer feedback</h2>
         <p>Analyze reviews in Turkish or English.</p>
 
-        <div
-          role="group"
-          aria-label="Analysis mode"
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '10px',
-            marginBottom: '24px',
-          }}
-        >
+        <div role="group" aria-label="Analysis mode" style={{
+          display: 'flex', flexWrap: 'wrap', gap: '10px',
+          marginBottom: '24px',
+        }}>
           {(['single', 'batch', 'csv'] as Mode[]).map((item) => (
             <button
               key={item}
               type="button"
               aria-pressed={mode === item}
               disabled={busy}
-              onClick={() => changeMode(item)}
+              onClick={() => {
+                setMode(item)
+                clearResults()
+              }}
               style={{
                 padding: '10px 18px',
                 borderRadius: '10px',
                 border: '1px solid #d0d5dd',
-                backgroundColor: mode === item ? '#7c3aed' : '#ffffff',
-                color: mode === item ? '#ffffff' : '#344054',
+                background: mode === item ? '#7c3aed' : '#fff',
+                color: mode === item ? '#fff' : '#344054',
                 fontWeight: 600,
                 cursor: busy ? 'wait' : 'pointer',
               }}
@@ -361,11 +431,9 @@ function App() {
           <div>
             <label htmlFor="csv-file">Review CSV file</label>
             <p id="csv-help">
-              Select a UTF-8 CSV with a column named "text". Up to 50
-              non-empty reviews, maximum file size 2 MB. Empty reviews
-              are ignored.
+              Select a UTF-8, comma-separated CSV with a "text" column.
+              Up to 50 non-empty reviews and 2 MB. Empty reviews are ignored.
             </p>
-
             <input
               id="csv-file"
               type="file"
@@ -378,27 +446,17 @@ function App() {
                 handleFile(file)
               }}
             />
-
             {fileName && (
-              <div style={{ marginTop: '20px' }}>
-                <p>
-                  <strong>{fileName}</strong> — {csvReviews.length} reviews
-                  ready
-                </p>
-
+              <div>
+                <p><strong>{fileName}</strong> — {csvReviews.length} reviews ready</p>
                 <h3>Preview: first {Math.min(5, csvReviews.length)} reviews</h3>
                 <ol>
                   {csvReviews.slice(0, 5).map((text, index) => (
-                    <li
-                      key={index}
-                      style={{
-                        marginBottom: '10px',
-                        whiteSpace: 'pre-wrap',
-                        overflowWrap: 'anywhere',
-                      }}
-                    >
-                      {text}
-                    </li>
+                    <li key={index} style={{
+                      whiteSpace: 'pre-wrap',
+                      overflowWrap: 'anywhere',
+                      marginBottom: '10px',
+                    }}>{text}</li>
                   ))}
                 </ol>
               </div>
@@ -409,35 +467,25 @@ function App() {
             <label htmlFor="review">
               {mode === 'single' ? 'Customer review' : 'Customer reviews'}
             </label>
-
             <p id="input-help">
               {mode === 'single'
                 ? 'Enter one customer review.'
-                : 'Enter one review per line, up to 50 reviews. Blank lines are ignored.'}
+                : 'Enter one review per line, up to 50. Blank lines are ignored.'}
             </p>
-
             <textarea
               id="review"
               aria-describedby="input-help"
               value={mode === 'single' ? review : batchText}
               onChange={(event) => {
-                if (mode === 'single') {
-                  setReview(event.target.value)
-                } else {
-                  setBatchText(event.target.value)
-                }
+                if (mode === 'single') setReview(event.target.value)
+                else setBatchText(event.target.value)
                 clearResults()
               }}
-              placeholder={
-                mode === 'single'
-                  ? 'Paste a customer review here...'
-                  : 'Enter each customer review on a separate line...'
-              }
+              placeholder="Enter customer feedback..."
               rows={mode === 'single' ? 6 : 10}
               maxLength={mode === 'single' ? 10000 : 500100}
               disabled={busy}
             />
-
             <span className="character-count">
               {mode === 'single'
                 ? `${review.length} / 10,000 characters`
@@ -453,34 +501,18 @@ function App() {
           disabled={busy || validationError !== null}
           onClick={handleAnalyze}
         >
-          {isParsing
-            ? 'Reading CSV...'
-            : isLoading
-              ? 'Analyzing...'
-              : mode === 'single'
-                ? 'Analyze review'
-                : 'Analyze reviews'}
+          {isParsing ? 'Reading CSV...' : isLoading ? 'Analyzing...'
+            : mode === 'single' ? 'Analyze review' : 'Analyze reviews'}
         </button>
 
         <p role="status">
-          {isParsing
-            ? 'Reading your CSV file.'
-            : isLoading
-              ? 'Analyzing your feedback. Please wait.'
-              : ''}
+          {isParsing ? 'Reading your CSV file.'
+            : isLoading ? 'Analyzing your feedback. Please wait.' : ''}
         </p>
-
         {validationError && activeReviews.length > 0 && (
-          <p className="error-message" role="alert">
-            {validationError}
-          </p>
+          <p className="error-message" role="alert">{validationError}</p>
         )}
-
-        {error && (
-          <p className="error-message" role="alert">
-            {error}
-          </p>
-        )}
+        {error && <p className="error-message" role="alert">{error}</p>}
       </section>
 
       <div aria-live="polite">
@@ -498,6 +530,7 @@ function App() {
         {result && (
           <section aria-label="Analysis result">
             <h2>Analysis result</h2>
+            <p>Topics use keyword matching; sentiment describes the whole review.</p>
             <ReviewResult result={result} />
           </section>
         )}
@@ -505,26 +538,11 @@ function App() {
         {batchResult && (
           <section aria-label="Batch analysis results">
             <h2>Batch analysis results</h2>
-
             <div className="review-panel">
               <h3>Total reviews: {batchResult.total}</h3>
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-                  gap: '16px',
-                }}
-              >
+              <div style={gridStyle}>
                 {sentimentOrder.map((sentiment) => (
-                  <div
-                    key={sentiment}
-                    style={{
-                      padding: '20px',
-                      border: '1px solid #eaecf0',
-                      borderRadius: '12px',
-                    }}
-                  >
+                  <div key={sentiment} style={cardStyle}>
                     <strong style={{ color: colors[sentiment] }}>
                       {labels[sentiment]}
                     </strong>
@@ -532,15 +550,15 @@ function App() {
                       {batchResult.counts[sentiment]}
                     </div>
                     <span>
-                      {percent(
-                        batchResult.counts[sentiment] / batchResult.total,
-                      )}{' '}
-                      of reviews
+                      {percent(batchResult.counts[sentiment] / batchResult.total)}
+                      {' '}of reviews
                     </span>
                   </div>
                 ))}
               </div>
             </div>
+
+            <TopicOverview data={batchResult} />
 
             {batchResult.results.map((item, index) => (
               <section key={index} aria-label={`Review ${index + 1}`}>
@@ -552,9 +570,7 @@ function App() {
         )}
 
         {exportResults.length > 0 && (
-          <p>
-            Confidence reflects the model’s score, not measured accuracy.
-          </p>
+          <p>Confidence reflects the model’s score, not measured accuracy.</p>
         )}
       </div>
     </main>

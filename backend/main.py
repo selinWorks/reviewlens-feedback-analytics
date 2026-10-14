@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 from threading import Lock
 from typing import Literal
+import re
+import unicodedata
 
 import torch
 from fastapi import FastAPI, HTTPException
@@ -14,6 +16,87 @@ MAX_TOKENS = 512
 BATCH_SIZE = 8
 
 Sentiment = Literal["negative", "neutral", "positive"]
+
+# Önceden tanımlanmış konular: eşleşmeler konuya değinildiğini gösterir.
+# Yorumun genel duygusu, her konu için ayrı bir duygu analizi değildir.
+TOPIC_RULES = {
+    "delivery": {
+        "label": "Delivery",
+        "keywords": [
+            "kargo", "teslimat", "teslim", "kurye",
+            "delivery", "shipping", "shipment", "courier",
+            "arrived", "late delivery",
+        ],
+    },
+    "product_quality": {
+        "label": "Product quality",
+        "keywords": [
+            "kalite", "kaliteli", "kalitesiz",
+            "kırık", "kırıldı", "bozuk", "bozuldu",
+            "kusurlu", "dayanıklı", "dayanıksız", "hasarlı",
+            "quality", "broken", "defective", "damaged",
+            "durable", "faulty", "stopped working",
+        ],
+    },
+    "customer_service": {
+        "label": "Customer service",
+        "keywords": [
+            "müşteri hizmetleri", "destek ekibi",
+            "destek hattı", "satıcı", "iletişim",
+            "customer service", "customer support",
+            "support team", "seller",
+        ],
+    },
+    "price": {
+        "label": "Price",
+        "keywords": [
+            "fiyat", "fiyatı", "fiyatına", "fiyatlar",
+            "pahalı", "ucuz", "ücret", "ücreti", "indirim",
+            "price", "pricing", "expensive", "cheap",
+            "cost", "discount", "value for money",
+        ],
+    },
+    "packaging": {
+        "label": "Packaging",
+        "keywords": [
+            "paket", "paketin", "paketi", "paketleme",
+            "ambalaj", "ambalajı", "kutu", "kutusu",
+            "packaging", "package", "box", "wrapped",
+        ],
+    },
+    "returns_refunds": {
+        "label": "Returns and refunds",
+        "keywords": [
+            "iade", "iadesi", "değişim", "geri ödeme",
+            "para iadesi", "refund", "refunded",
+            "return", "returns", "exchange", "money back",
+        ],
+    },
+}
+
+
+def normalize_text(text: str) -> str:
+    text = text.replace("İ", "i").replace("I", "ı").lower()
+    text = text.translate(str.maketrans("ıçğöşü", "icgosu"))
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+TOPIC_PATTERNS = {
+    topic_id: [
+        (
+            keyword,
+            re.compile(
+                r"(?<!\w)"
+                + re.escape(normalize_text(keyword))
+                + r"(?!\w)"
+            ),
+        )
+        for keyword in rule["keywords"]
+    ]
+    for topic_id, rule in TOPIC_RULES.items()
+}
 
 
 @asynccontextmanager
@@ -35,7 +118,7 @@ app = FastAPI(title="ReviewLens API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-        allow_origins=[
+    allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:5174",
@@ -63,12 +146,20 @@ class SentimentScores(BaseModel):
     positive: float
 
 
+class TopicMatch(BaseModel):
+    topic: str
+    label: str
+    matched_keywords: list[str]
+    method: Literal["keyword_rules"] = "keyword_rules"
+
+
 class ReviewResponse(BaseModel):
     text: str
     sentiment: Sentiment
     confidence: float
     scores: SentimentScores
     model: str
+    topics: list[TopicMatch]
 
 
 class SentimentCounts(BaseModel):
@@ -77,10 +168,79 @@ class SentimentCounts(BaseModel):
     positive: int
 
 
+class TopicEvidence(BaseModel):
+    review_index: int
+    text: str
+    review_sentiment: Sentiment
+    matched_keywords: list[str]
+
+
+class TopicSummary(BaseModel):
+    topic: str
+    label: str
+    count: int
+    percentage: float
+    evidence: list[TopicEvidence]
+
+
 class BatchReviewResponse(BaseModel):
     total: int
     counts: SentimentCounts
     results: list[ReviewResponse]
+    topic_summary: list[TopicSummary]
+    unmatched_topic_count: int
+    topic_method: Literal["keyword_rules"] = "keyword_rules"
+
+
+def detect_topics(text: str) -> list[TopicMatch]:
+    normalized = normalize_text(text)
+    matches: list[TopicMatch] = []
+
+    for topic_id, patterns in TOPIC_PATTERNS.items():
+        keywords = [
+            keyword
+            for keyword, pattern in patterns
+            if pattern.search(normalized)
+        ]
+
+        if keywords:
+            matches.append(
+                TopicMatch(
+                    topic=topic_id,
+                    label=TOPIC_RULES[topic_id]["label"],
+                    matched_keywords=keywords,
+                )
+            )
+
+    return matches
+
+
+def summarize_topics(results: list[ReviewResponse]) -> list[TopicSummary]:
+    evidence_by_topic: dict[str, list[TopicEvidence]] = {}
+
+    for index, result in enumerate(results, start=1):
+        for match in result.topics:
+            evidence_by_topic.setdefault(match.topic, []).append(
+                TopicEvidence(
+                    review_index=index,
+                    text=result.text,
+                    review_sentiment=result.sentiment,
+                    matched_keywords=match.matched_keywords,
+                )
+            )
+
+    summaries = [
+        TopicSummary(
+            topic=topic_id,
+            label=TOPIC_RULES[topic_id]["label"],
+            count=len(evidence),
+            percentage=round(len(evidence) / len(results) * 100, 1),
+            evidence=evidence,
+        )
+        for topic_id, evidence in evidence_by_topic.items()
+    ]
+
+    return sorted(summaries, key=lambda item: (-item.count, item.topic))
 
 
 def predict_reviews(reviews: list[ReviewRequest]) -> list[ReviewResponse]:
@@ -88,7 +248,6 @@ def predict_reviews(reviews: list[ReviewRequest]) -> list[ReviewResponse]:
     model = app.state.model
     texts = [review.text for review in reviews]
 
-    # Önce tüm yorumları kontrol et; uzun metinleri sessizce kesme.
     encoded = tokenizer(
         texts,
         truncation=False,
@@ -114,7 +273,6 @@ def predict_reviews(reviews: list[ReviewRequest]) -> list[ReviewResponse]:
 
     results: list[ReviewResponse] = []
 
-    # Aynı model üzerinde eşzamanlı ağır işlemleri sıraya al.
     with app.state.inference_lock:
         for start in range(0, len(texts), BATCH_SIZE):
             batch_texts = texts[start : start + BATCH_SIZE]
@@ -132,14 +290,13 @@ def predict_reviews(reviews: list[ReviewRequest]) -> list[ReviewResponse]:
                 probabilities = torch.softmax(logits, dim=-1).tolist()
 
             for text, probability in zip(batch_texts, probabilities):
-                # Çok olumsuz ve olumsuz; olumlu ve çok olumlu birleşir.
                 scores = {
                     "negative": probability[0] + probability[1],
                     "neutral": probability[2],
                     "positive": probability[3] + probability[4],
                 }
 
-                sentiment: Sentiment = max(scores, key=scores.get)
+                sentiment = max(scores, key=scores.get)
 
                 results.append(
                     ReviewResponse(
@@ -148,6 +305,7 @@ def predict_reviews(reviews: list[ReviewRequest]) -> list[ReviewResponse]:
                         confidence=scores[sentiment],
                         scores=SentimentScores(**scores),
                         model=MODEL_NAME,
+                        topics=detect_topics(text),
                     )
                 )
 
@@ -181,4 +339,6 @@ def analyze_batch(request: BatchReviewRequest):
         total=len(results),
         counts=SentimentCounts(**counts),
         results=results,
+        topic_summary=summarize_topics(results),
+        unmatched_topic_count=sum(not result.topics for result in results),
     )
