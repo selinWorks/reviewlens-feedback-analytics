@@ -262,6 +262,115 @@ function TopicOverview({ data }: { data: BatchResponse }) {
   )
 }
 
+function AnalyticsCharts({ data }: { data: BatchResponse }) {
+  const total = data.total
+  const positiveEnd = total ? (data.counts.positive / total) * 100 : 0
+  const neutralEnd = positiveEnd + (total ? (data.counts.neutral / total) * 100 : 0)
+  const topics = [...data.topic_summary].sort(
+    (a, b) => b.count - a.count || a.label.localeCompare(b.label),
+  )
+
+  return (
+    <section className="review-panel" aria-label="Feedback charts">
+      <h2>Feedback at a glance</h2>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))',
+        gap: '24px',
+      }}>
+        <figure style={{ ...cardStyle, margin: 0 }}>
+          <figcaption style={{ fontSize: '20px', fontWeight: 700 }}>
+            Sentiment distribution
+          </figcaption>
+          <p>Number of reviews by overall sentiment.</p>
+          <div aria-hidden="true" style={{
+            width: 'min(220px, 100%)',
+            aspectRatio: '1',
+            margin: '24px auto',
+            borderRadius: '50%',
+            background: total
+              ? `conic-gradient(${colors.positive} 0% ${positiveEnd}%, ${colors.neutral} ${positiveEnd}% ${neutralEnd}%, ${colors.negative} ${neutralEnd}% 100%)`
+              : '#eaecf0',
+            display: 'grid',
+            placeItems: 'center',
+          }}>
+            <div style={{
+              width: '70%', height: '70%', borderRadius: '50%',
+              background: '#fff', display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', color: '#101828',
+            }}>
+              <strong style={{ fontSize: '32px' }}>{total}</strong>
+              <span>reviews</span>
+            </div>
+          </div>
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {sentimentOrder.map((sentiment) => (
+              <li key={sentiment} style={{
+                display: 'flex', justifyContent: 'space-between',
+                gap: '12px', flexWrap: 'wrap', marginTop: '12px',
+              }}>
+                <span>
+                  <span aria-hidden="true" style={{
+                    display: 'inline-block', width: '10px', height: '10px',
+                    borderRadius: '50%', marginRight: '8px',
+                    background: colors[sentiment],
+                  }} />
+                  {labels[sentiment]}
+                </span>
+                <strong>
+                  {data.counts[sentiment]} · {percent(total ? data.counts[sentiment] / total : 0)}
+                </strong>
+              </li>
+            ))}
+          </ul>
+        </figure>
+
+        <figure style={{ ...cardStyle, margin: 0 }}>
+          <figcaption style={{ fontSize: '20px', fontWeight: 700 }}>
+            Topic frequency
+          </figcaption>
+          <p>Share of all {total} reviews mentioning each matched topic.</p>
+          {topics.length === 0 ? (
+            <p>No predefined topics matched these reviews.</p>
+          ) : (
+            <ul style={{ listStyle: 'none', padding: 0, margin: '24px 0' }}>
+              {topics.map((topic) => {
+                const share = total ? topic.count / total : 0
+                return (
+                  <li key={topic.topic} style={{ marginBottom: '20px' }}>
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      gap: '12px', flexWrap: 'wrap', marginBottom: '8px',
+                    }}>
+                      <strong>{topic.label}</strong>
+                      <span>{topic.count} / {total} · {percent(share)}</span>
+                    </div>
+                    <div aria-hidden="true" style={{
+                      height: '12px', borderRadius: '999px',
+                      background: '#eaecf0', overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        width: `${Math.max(0, Math.min(100, share * 100))}%`,
+                        height: '100%', borderRadius: '999px', background: '#7c3aed',
+                      }} />
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          <p>Reviews without a topic match: <strong>{data.unmatched_topic_count}</strong></p>
+          <p style={{ fontSize: '14px' }}>
+            Topics use predefined keyword matching. A review can mention multiple
+            topics, so percentages may total more than 100%. Mentions include
+            praise and complaints.
+          </p>
+        </figure>
+      </div>
+    </section>
+  )
+}
+
 function App() {
   const [mode, setMode] = useState<Mode>('single')
   const [review, setReview] = useState('')
@@ -557,6 +666,8 @@ function App() {
                 ))}
               </div>
             </div>
+
+            <AnalyticsCharts data={batchResult} />
 
             <TopicOverview data={batchResult} />
 
