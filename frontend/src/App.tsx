@@ -371,6 +371,109 @@ function AnalyticsCharts({ data }: { data: BatchResponse }) {
   )
 }
 
+function FilteredReviews({ data }: { data: BatchResponse }) {
+  const [sentiment, setSentiment] = useState<Sentiment | 'all'>('all')
+  const [topic, setTopic] = useState('all')
+  const filtered = data.results
+    .map((result, index) => ({ result, index }))
+    .filter(({ result }) =>
+      (sentiment === 'all' || result.sentiment === sentiment) &&
+      (topic === 'all' || (topic === 'unmatched'
+        ? result.topics.length === 0
+        : result.topics.some((match) => match.topic === topic))),
+    )
+  const hasFilters = sentiment !== 'all' || topic !== 'all'
+  const selectStyle = {
+    width: '100%', padding: '12px', marginTop: '8px',
+    border: '1px solid #d0d5dd', borderRadius: '10px',
+    background: '#fff', color: '#101828', font: 'inherit',
+  }
+
+  return (
+    <section aria-label="Review explorer">
+      <div className="review-panel">
+        <h2>Explore reviews</h2>
+        <p>Combine filters to narrow the review list. Charts and topic summaries above show all analyzed reviews.</p>
+        <div style={{
+          display: 'grid', gap: '16px',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
+        }}>
+          <div>
+            <label htmlFor="sentiment-filter">Overall sentiment</label>
+            <select
+              id="sentiment-filter"
+              value={sentiment}
+              onChange={(event) => setSentiment(event.target.value as Sentiment | 'all')}
+              style={selectStyle}
+            >
+              <option value="all">All sentiments</option>
+              {sentimentOrder.map((item) => (
+                <option key={item} value={item}>
+                  {labels[item]} ({data.counts[item]})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="topic-filter">Matched topic</label>
+            <select
+              id="topic-filter"
+              value={topic}
+              onChange={(event) => setTopic(event.target.value)}
+              style={selectStyle}
+            >
+              <option value="all">All topics</option>
+              {[...data.topic_summary]
+                .sort((a, b) => a.label.localeCompare(b.label))
+                .map((item) => (
+                  <option key={item.topic} value={item.topic}>
+                    {item.label} ({item.count})
+                  </option>
+                ))}
+              <option value="unmatched">No topic match ({data.unmatched_topic_count})</option>
+            </select>
+          </div>
+        </div>
+        <p role="status">Showing {filtered.length} of {data.total} reviews.</p>
+        <button
+          type="button"
+          disabled={!hasFilters}
+          onClick={() => { setSentiment('all'); setTopic('all') }}
+          style={{
+            padding: '10px 18px', border: '1px solid #d0d5dd',
+            borderRadius: '10px', background: '#fff', color: '#344054',
+            font: 'inherit', cursor: hasFilters ? 'pointer' : 'default',
+            opacity: hasFilters ? 1 : 0.5,
+          }}
+        >
+          Clear filters
+        </button>
+        <p style={{ fontSize: '14px' }}>Option counts refer to all analyzed reviews. Sentiment describes the whole review.</p>
+        {hasFilters && filtered.length > 0 && (
+          <button
+            type="button"
+            className="analyze-button"
+            onClick={() => downloadResults(filtered.map(({ result }) => result))}
+          >
+            Download filtered results CSV
+          </button>
+        )}
+      </div>
+      {filtered.length === 0 ? (
+        <div className="review-panel">
+          <h3>No reviews match these filters</h3>
+          <p>Choose another sentiment or topic, or clear the filters to see all reviews.</p>
+        </div>
+      ) : filtered.map(({ result, index }) => (
+        <section key={index} aria-label={`Review ${index + 1}`}>
+          <h3>Review {index + 1}</h3>
+          <ReviewResult result={result} />
+        </section>
+      ))}
+    </section>
+  )
+}
+
 function App() {
   const [mode, setMode] = useState<Mode>('single')
   const [review, setReview] = useState('')
@@ -671,12 +774,7 @@ function App() {
 
             <TopicOverview data={batchResult} />
 
-            {batchResult.results.map((item, index) => (
-              <section key={index} aria-label={`Review ${index + 1}`}>
-                <h3>Review {index + 1}</h3>
-                <ReviewResult result={item} />
-              </section>
-            ))}
+            <FilteredReviews data={batchResult} />
           </section>
         )}
 
