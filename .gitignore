@@ -7,3 +7,12 @@ dist/
 .env
 .env.*
 !.env.example
+# ML datasets and trained models
+/ml/data/raw/*
+/ml/data/processed/*
+/ml/models/*
+
+# Keep directory placeholders
+!/ml/data/raw/.gitkeep
+!/ml/data/processed/.gitkeep
+!/ml/models/.gitkeep
