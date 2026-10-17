@@ -1,0 +1,36 @@
+{
+  "dataset": "maydogan/Turkish_SentimentAnalysis_TRSAv1",
+  "revision": "3bda52ed2c57ac1e80ac463192cafeeae9f72213",
+  "splits": {
+    "train": {
+      "rows": 150000,
+      "columns": [
+        "id",
+        "score",
+        "review"
+      ],
+      "missing_values": {
+        "id": 0,
+        "score": 0,
+        "review": 0
+      },
+      "label_counts": {
+        "Positive": 50000,
+        "Negative": 50000,
+        "Neutral": 50000
+      },
+      "empty_reviews": 0,
+      "duplicate_reviews": 9109,
+      "character_lengths": {
+        "count": 150000.0,
+        "mean": 81.53387333333333,
+        "std": 72.76154360337247,
+        "min": 3.0,
+        "25%": 34.0,
+        "50%": 61.0,
+        "75%": 105.0,
+        "max": 1993.0
+      }
+    }
+  }
+}
