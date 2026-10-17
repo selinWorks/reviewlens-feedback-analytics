@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Papa from 'papaparse'
+import './index.css'
 
 type Sentiment = 'negative' | 'neutral' | 'positive'
 type Mode = 'single' | 'batch' | 'csv'
@@ -64,7 +65,7 @@ const modeLabels: Record<Mode, string> = {
 
 const gridStyle = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
   gap: '16px',
 }
 
@@ -126,7 +127,7 @@ function downloadResults(results: ReviewResponse[]) {
 
 function ReviewResult({ result }: { result: ReviewResponse }) {
   return (
-    <article className="review-panel">
+    <article className="review-panel result-card">
       <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
         {result.text}
       </p>
@@ -603,12 +604,27 @@ function App() {
 
   return (
     <main>
-      <h1>ReviewLens</h1>
-      <p>Turn customer feedback into actionable insights.</p>
-
-      <section className="review-panel" aria-busy={busy}>
-        <h2>Analyze customer feedback</h2>
-        <p>Analyze reviews in Turkish or English.</p>
+      <header className="topbar">
+        <a className="brand" href="#"><span className="brand-mark" aria-hidden="true">R</span>ReviewLens<span className="brand-tag">FEEDBACK ANALYTICS</span></a>
+        <span className="workspace-tag">Your analysis workspace</span>
+      </header>
+      <section className="hero" aria-labelledby="page-title">
+        <div>
+          <span className="eyebrow">LESS READING. MORE UNDERSTANDING.</span>
+          <h1 id="page-title">Every review has<br />a story. <span>See the patterns.</span></h1>
+          <p>Explore customer sentiment, find recurring topics, and turn a collection of reviews into a clearer picture.</p>
+          <div className="hero-tags"><span>Turkish & English</span><span>Single, batch & CSV</span><span>Exportable results</span></div>
+        </div>
+        <aside className="workflow-card" aria-label="How it works">
+          <span className="eyebrow">FROM FEEDBACK TO FINDINGS</span>
+          <ol><li><b>Add your reviews</b><span>Paste feedback or upload a CSV.</span></li><li><b>Discover the patterns</b><span>Explore sentiment and matched topics.</span></li><li><b>Take a closer look</b><span>Filter reviews and export your findings.</span></li></ol>
+        </aside>
+      </section>
+      <div className="workspace-layout">
+      <section className="review-panel input-panel" aria-busy={busy}>
+        <div className="section-kicker">01 / INPUT</div>
+        <h2>Start with your feedback</h2>
+        <p>Add customer reviews in Turkish or English.</p>
 
         <div role="group" aria-label="Analysis mode" style={{
           display: 'flex', flexWrap: 'wrap', gap: '10px',
@@ -727,7 +743,16 @@ function App() {
         {error && <p className="error-message" role="alert">{error}</p>}
       </section>
 
-      <div aria-live="polite">
+      <div className="results-workspace" aria-live="polite">
+        {!result && !batchResult && (
+          <section className="empty-results">
+            <div className="empty-graphic" aria-hidden="true"><i /><i /><i /><i /><i /></div>
+            <span className="section-kicker">02 / FINDINGS</span>
+            <h2>A clearer picture starts here.</h2>
+            <p>{isLoading ? 'Analyzing your reviews. Your findings will appear here shortly.' : 'Add your reviews and run an analysis to explore sentiment, topic matches, and supporting feedback.'}</p>
+            <div className="empty-features"><span>Sentiment</span><span>Topics</span><span>Evidence</span></div>
+          </section>
+        )}
         {exportResults.length > 0 && (
           <button
             type="button"
@@ -782,6 +807,8 @@ function App() {
           <p>Confidence reflects the model’s score, not measured accuracy.</p>
         )}
       </div>
+      </div>
+      <footer className="site-footer"><span>ReviewLens / Customer Feedback Analytics</span><span>Sentiment predictions · Keyword-based topic matching</span></footer>
     </main>
   )
 }
