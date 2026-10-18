@@ -1,0 +1,59 @@
+{
+  "dataset": "maydogan/Turkish_SentimentAnalysis_TRSAv1",
+  "revision": "3bda52ed2c57ac1e80ac463192cafeeae9f72213",
+  "random_seed": 42,
+  "normalization": "Unicode NFC and whitespace normalization",
+  "conflict_policy": "Exclude all rows with conflicting text labels",
+  "duplicate_policy": "Keep one row per normalized text",
+  "original_rows": 150000,
+  "missing_rows_removed": 0,
+  "empty_rows_removed": 0,
+  "conflicting_unique_texts": 898,
+  "conflicting_rows_removed": 6925,
+  "consistent_duplicate_rows_removed": 3082,
+  "clean_rows": 139993,
+  "clean_label_counts": {
+    "negative": 46412,
+    "neutral": 45354,
+    "positive": 48227
+  },
+  "splits": {
+    "train": {
+      "rows": 111994,
+      "percentage": 80.0,
+      "label_counts": {
+        "negative": 37130,
+        "neutral": 36283,
+        "positive": 38581
+      }
+    },
+    "validation": {
+      "rows": 13999,
+      "percentage": 10.0,
+      "label_counts": {
+        "negative": 4641,
+        "neutral": 4535,
+        "positive": 4823
+      }
+    },
+    "test": {
+      "rows": 14000,
+      "percentage": 10.0,
+      "label_counts": {
+        "negative": 4641,
+        "neutral": 4536,
+        "positive": 4823
+      }
+    }
+  },
+  "normalized_text_overlap": {
+    "train_vs_validation": 0,
+    "train_vs_test": 0,
+    "validation_vs_test": 0
+  },
+  "limitations": [
+    "Near-duplicate reviews are not detected.",
+    "Product and author grouping are unavailable in this export.",
+    "Balanced source labels may differ from real review distributions."
+  ]
+}
