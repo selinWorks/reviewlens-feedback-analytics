@@ -1,0 +1,101 @@
+{
+  "model": "TF-IDF + Logistic Regression",
+  "language": "Turkish",
+  "evaluation_split": "validation",
+  "test_used": false,
+  "created_at_utc": "2026-10-20T12:02:29.922892+00:00",
+  "random_seed": 42,
+  "train_rows": 111994,
+  "validation_rows": 13999,
+  "train_sha256": "0d688af9cc528194771a379c618a66362ee64cb5ac5fdf83c01f7a2b7696015f",
+  "validation_sha256": "0eedcc7bcb7767befc15f78782a2b622238567f962cb44a0c57f5d2279bef7fe",
+  "training_seconds": 11.76,
+  "accuracy": 0.8055575398242731,
+  "macro_f1": 0.8042114757065096,
+  "classification_report": {
+    "negative": {
+      "precision": 0.8573018699910953,
+      "recall": 0.8297780650721828,
+      "f1-score": 0.8433154494689588,
+      "support": 4641.0
+    },
+    "neutral": {
+      "precision": 0.7267467734757455,
+      "recall": 0.7201764057331863,
+      "f1-score": 0.7234466718351977,
+      "support": 4535.0
+    },
+    "positive": {
+      "precision": 0.8298424097346898,
+      "recall": 0.862533692722372,
+      "f1-score": 0.8458723058153721,
+      "support": 4823.0
+    },
+    "accuracy": 0.8055575398242731,
+    "macro avg": {
+      "precision": 0.804630351067177,
+      "recall": 0.8041627211759136,
+      "f1-score": 0.8042114757065096,
+      "support": 13999.0
+    },
+    "weighted avg": {
+      "precision": 0.8055478633110642,
+      "recall": 0.8055575398242731,
+      "f1-score": 0.8053646538113864,
+      "support": 13999.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      3851,
+      636,
+      154
+    ],
+    [
+      570,
+      3266,
+      699
+    ],
+    [
+      71,
+      592,
+      4160
+    ]
+  ],
+  "label_order": [
+    "negative",
+    "neutral",
+    "positive"
+  ],
+  "majority_baseline": {
+    "label": "positive",
+    "accuracy": 0.34452460890063574,
+    "macro_f1": 0.17082846314596392
+  },
+  "configuration": {
+    "tfidf": {
+      "lowercase": false,
+      "ngram_range": [
+        1,
+        2
+      ],
+      "min_df": 2,
+      "max_df": 0.98,
+      "max_features": 100000,
+      "sublinear_tf": true
+    },
+    "classifier": {
+      "C": 1.0,
+      "solver": "lbfgs",
+      "max_iter": 1000
+    }
+  },
+  "vocabulary_size": 100000,
+  "convergence_warnings": [],
+  "versions": {
+    "python": "3.11.9",
+    "scikit_learn": "1.9.1",
+    "pandas": "3.0.6",
+    "joblib": "1.6.0"
+  }
+}
